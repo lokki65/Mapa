@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mapa con Firebase y Geocerca</title>
+
+  <!-- Firebase (Módulos ES6) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-app.js";
+    import { getDatabase, ref, onChildAdded, update } from "https://www.gstatic.com/firebasejs/9.6.1/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBJNp7SynqR5widR2VJDLAAfG56xPcwChA",
+      authDomain: "ubicacion.firebaseapp.com",
+      databaseURL: "https://ubicacion-5b38e-default-rtdb.firebaseio.com",
+      projectId: "ubicacion",
+      storageBucket: "ubicacion.appspot.com",
+      messagingSenderId: "930942711467",
+      appId: "1:930942711467:android:36f427dfa94cc296c369ee"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const database = getDatabase(app);
+    const ubicacionRef = ref(database, 'ubicaciones/');
+    let ultimaUbicacion = null;
+
+    window.onMapReady = () => {
+      onChildAdded(ubicacionRef, (snapshot) => {
+        const ubicacion = snapshot.val();
+        const key = snapshot.key;
+
+        if (ubicacion && ubicacion.latitud && ubicacion.longitud) {
+          ultimaUbicacion = {
+            lat: parseFloat(ubicacion.latitud),
+            lng: parseFloat(ubicacion.longitud)
+          };
+
+          const punto = turf.point([ultimaUbicacion.lng, ultimaUbicacion.lat]);
+          const estaDentro = turf.booleanPointInPolygon(punto, window.geocerca);
+
+          const alerta = document.getElementById('alerta');
+          if (!estaDentro) {
+            alerta.style.display = 'block';
+            alerta.textContent = '⚠️ ¡Estás fuera de la zona segura!';
+          } else {
+            alerta.style.display = 'none';
+          }
+
+          const seguridad = estaDentro ? 1 : 0;
+          const refActual = ref(database, 'ubicaciones/' + key);
+          update(refActual, { seguridad })
+            .then(() => console.log(`Seguridad: ${seguridad} actualizada para ${key}`))
+            .catch(err => console.error("Error al actualizar:", err));
+
+          actualizarUbicacionEnMapa(ultimaUbicacion.lat, ultimaUbicacion.lng);
+        }
+      });
+    };
+  </script>
+
+  <!-- Mapbox -->
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.css" rel="stylesheet" />
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.10.0/mapbox-gl.js"></script>
+
+  <!-- Turf.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+
+  <style>
+    #map { height: 100vh; width: 100%; }
+    .status {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: #fff;
+      padding: 10px;
+      border-radius: 8px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.3);
+      font-family: Arial;
+      z-index: 1000;
+    }
+    #alerta {
+      background: red;
+      color: white;
+      font-size: 20px;
+      padding: 15px;
+      text-align: center;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="alerta"></div>
+  <div id="map"></div>
+  <div id="statusMessage" class="status">Cargando mapa...</div>
+
+  <script>
+    mapboxgl.accessToken = 'pk.eyJ1IjoibWljazMzNiIsImEiOiJjbThxYmM4bWQwamJzMnRweXlzaHJkMnZoIn0.tummUvgl6wgWFv5EvydbYw';
+    let map, marcadorUsuario;
+
+    function iniciarMapa() {
+      const centro = [-68.119846, -16.503425];
+
+      map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/mapbox/streets-v11',
+        center: centro,
+        zoom: 18
+      });
+
+      map.addControl(new mapboxgl.NavigationControl());
+
+      // Definir polígono personalizado (modifica estos puntos para tu zona real)
+      const poligono = turf.polygon([[
+        [-68.119647, -16.502663],
+        [-68.119134, -16.502637],
+        [-68.119085, -16.503817],
+        [-68.120262, -16.503873],
+        [-68.119647, -16.502663] // Cierre del polígono
+      ]]);
+      window.geocerca = poligono;
+
+      map.on('load', () => {
+        map.addSource('geocerca', {
+          type: 'geojson',
+          data: poligono
+        });
+
+        map.addLayer({
+          id: 'geocerca-fill',
+          type: 'fill',
+          source: 'geocerca',
+          layout: {},
+          paint: {
+            'fill-color': '#0080ff',
+            'fill-opacity': 0.3
+          }
+        });
+
+        map.addLayer({
+          id: 'geocerca-linea',
+          type: 'line',
+          source: 'geocerca',
+          layout: {},
+          paint: {
+            'line-color': '#0000ff',
+            'line-width': 2
+          }
+        });
+
+        window.onMapReady();
+        document.getElementById('statusMessage').textContent = "Mapa y geocerca listos";
+        setTimeout(() => {
+          document.getElementById('statusMessage').style.display = 'none';
+        }, 3000);
+      });
+    }
+
+    function actualizarUbicacionEnMapa(lat, lng) {
+      map.flyTo({ center: [lng, lat], zoom: 18 });
+
+      if (marcadorUsuario) marcadorUsuario.remove();
+
+      marcadorUsuario = new mapboxgl.Marker({ color: '#4285F4' })
+        .setLngLat([lng, lat])
+        .setPopup(new mapboxgl.Popup({ offset: 25 })
+          .setHTML(`<strong>Ubicación actual</strong><br>Lat: ${lat.toFixed(6)}<br>Lng: ${lng.toFixed(6)}`))
+        .addTo(map);
+
+      marcadorUsuario.togglePopup();
+    }
+
+    window.onload = iniciarMapa;
+  </script>
+</body>
+</html>
